@@ -1133,11 +1133,506 @@ const SecurityStack = () => {
 };
 
 /* ─────────────────────────────────────────────────────────────
+   06 — BALANCES (End User)
+   ───────────────────────────────────────────────────────────── */
+
+const HOLDINGS = [
+  { ccy: 'USD',  available: 2200.00, locked:   0.00, rate_usd: 1.0000,    change_24h: 0.00,  network: 'fiat',  symbol: '$' },
+  { ccy: 'USDT', available:  900.00, locked: 250.00, rate_usd: 1.0001,    change_24h: 0.01,  network: 'TRC-20', symbol: '₮' },
+  { ccy: 'USDC', available: 1500.00, locked:   0.00, rate_usd: 1.0000,    change_24h: 0.00,  network: 'ERC-20', symbol: '$' },
+  { ccy: 'COP',  available: 8320000, locked:   0.00, rate_usd: 0.000241,  change_24h: -0.21, network: 'fiat',  symbol: '$' },
+  { ccy: 'BTC',  available:    0.0285, locked: 0.00, rate_usd: 68420.00,  change_24h: 1.84,  network: 'BTC',   symbol: '₿' },
+];
+
+// Synthetic 30-day equity curve (in USD)
+const EQUITY_CURVE = (() => {
+  const points = [];
+  let v = 4200;
+  for (let i = 30; i >= 0; i--) {
+    const drift = (Math.sin(i / 4) * 80) + (Math.cos(i / 7) * 50);
+    const trend = (30 - i) * 28;
+    v = 4200 + trend + drift;
+    points.push({ d: i, v: Math.max(v, 3800) });
+  }
+  return points;
+})();
+
+const Sparkline = ({ data, color = '#bef264', height = 32, width = 100 }) => {
+  if (!data || data.length < 2) return null;
+  const vals = data.map((p) => p.v);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const range = max - min || 1;
+  const stepX = width / (data.length - 1);
+  const path = data
+    .map((p, i) => {
+      const x = i * stepX;
+      const y = height - ((p.v - min) / range) * height;
+      return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(' ');
+  const areaPath = `${path} L ${width} ${height} L 0 ${height} Z`;
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <path d={areaPath} fill={color} opacity="0.08" />
+      <path d={path} fill="none" stroke={color} strokeWidth="1.25" />
+    </svg>
+  );
+};
+
+const miniCurve = (ccyIndex) => {
+  // Variation per currency for visual diversity
+  return Array.from({ length: 20 }, (_, i) => ({
+    d: i,
+    v: 100 + Math.sin((i + ccyIndex) / 2.2) * 12 + Math.cos((i + ccyIndex) / 3.7) * 8 + i * (ccyIndex % 2 === 0 ? 0.4 : -0.2),
+  }));
+};
+
+const Balances = () => {
+  const [hideValues, setHideValues] = useState(false);
+  const [activeRange, setActiveRange] = useState('30D');
+
+  const totalUSD = HOLDINGS.reduce((acc, h) => acc + (h.available + h.locked) * h.rate_usd, 0);
+  const totalLockedUSD = HOLDINGS.reduce((acc, h) => acc + h.locked * h.rate_usd, 0);
+  const yesterdayUSD = EQUITY_CURVE[EQUITY_CURVE.length - 2].v;
+  const dayChangeUSD = totalUSD - yesterdayUSD;
+  const dayChangePct = (dayChangeUSD / yesterdayUSD) * 100;
+
+  const mask = (v) => (hideValues ? '••••••' : v);
+
+  // Curve dimensions
+  const W = 900, H = 220;
+  const vals = EQUITY_CURVE.map((p) => p.v);
+  const min = Math.min(...vals) * 0.97;
+  const max = Math.max(...vals) * 1.02;
+  const range = max - min;
+  const stepX = W / (EQUITY_CURVE.length - 1);
+  const curvePath = EQUITY_CURVE.map((p, i) => {
+    const x = i * stepX;
+    const y = H - ((p.v - min) / range) * H;
+    return `${i === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+  }).join(' ');
+  const areaPath = `${curvePath} L ${W} ${H} L 0 ${H} Z`;
+
+  return (
+    <section id="balances" className="py-24 px-12 lg:px-24 border-b border-stone-900">
+      <SectionMarker num="06" label="Balances" sub="user_42 · estimated value · live FX" />
+
+      {/* TOTAL CARD */}
+      <Panel className="p-10 mb-8">
+        <div className="flex items-start justify-between flex-wrap gap-6 mb-8">
+          <div>
+            <div className="font-mono text-[10px] text-stone-500 tracking-widest uppercase mb-3">Total estimated value</div>
+            <div className="flex items-baseline gap-3">
+              <span style={{ fontFamily: "'Instrument Serif', serif" }} className="text-6xl text-stone-100 italic leading-none tabular-nums">
+                {hideValues ? '••••••' : `$${totalUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+              </span>
+              <span className="font-mono text-sm text-stone-500">USD</span>
+            </div>
+            <div className="mt-3 flex items-center gap-3 font-mono text-xs">
+              <span className={dayChangeUSD >= 0 ? 'text-lime-300' : 'text-red-300'}>
+                {dayChangeUSD >= 0 ? '▲' : '▼'} {hideValues ? '•••' : `$${Math.abs(dayChangeUSD).toFixed(2)}`}
+                <span className="ml-1">({hideValues ? '••' : `${dayChangePct >= 0 ? '+' : ''}${dayChangePct.toFixed(2)}%`})</span>
+              </span>
+              <span className="text-stone-600">past 24h</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setHideValues(!hideValues)}
+              className="px-3 py-2 border border-stone-800 hover:border-stone-700 font-mono text-[10px] tracking-widest uppercase text-stone-400 flex items-center gap-2"
+            >
+              <Eye size={12} /> {hideValues ? 'Show' : 'Hide'}
+            </button>
+          </div>
+        </div>
+
+        {/* SECONDARY STATS */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px bg-stone-800 border border-stone-800 mb-8">
+          {[
+            { k: 'AVAILABLE', v: hideValues ? '••••' : `$${(totalUSD - totalLockedUSD).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, sub: 'usable now' },
+            { k: 'LOCKED', v: hideValues ? '••••' : `$${totalLockedUSD.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, sub: 'pending settlement' },
+            { k: 'CURRENCIES', v: HOLDINGS.filter((h) => h.available + h.locked > 0).length, sub: 'wallets active' },
+            { k: '24H VOLUME', v: hideValues ? '••••' : '$1,485.00', sub: 'across 4 txns' },
+          ].map((s, i) => (
+            <div key={i} className="bg-[#0a0a09] p-5">
+              <div className="font-mono text-[10px] text-stone-500 tracking-widest mb-2">{s.k}</div>
+              <div className="font-mono text-lg text-stone-100 tabular-nums">{s.v}</div>
+              <div className="font-mono text-[10px] text-stone-500 mt-1">{s.sub}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* EQUITY CURVE */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="font-mono text-[10px] text-stone-500 tracking-widest uppercase">Portfolio evolution</div>
+            <div className="flex gap-1">
+              {['7D', '30D', '90D', '1Y', 'ALL'].map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setActiveRange(r)}
+                  className={`px-2.5 py-1 font-mono text-[10px] tracking-widest border transition-colors ${
+                    activeRange === r
+                      ? 'border-lime-400/60 bg-lime-400/10 text-lime-300'
+                      : 'border-stone-800 text-stone-500 hover:border-stone-700'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="relative">
+            <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto" preserveAspectRatio="none">
+              <defs>
+                <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#bef264" stopOpacity="0.18" />
+                  <stop offset="100%" stopColor="#bef264" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {/* Grid lines */}
+              {[0.25, 0.5, 0.75].map((p) => (
+                <line key={p} x1="0" y1={H * p} x2={W} y2={H * p} stroke="#292524" strokeDasharray="2,4" />
+              ))}
+              <path d={areaPath} fill="url(#eqGrad)" />
+              <path d={curvePath} fill="none" stroke="#bef264" strokeWidth="1.5" />
+              {/* End point */}
+              <circle cx={W - 1} cy={H - ((EQUITY_CURVE[EQUITY_CURVE.length - 1].v - min) / range) * H} r="4" fill="#bef264" />
+              <circle cx={W - 1} cy={H - ((EQUITY_CURVE[EQUITY_CURVE.length - 1].v - min) / range) * H} r="8" fill="#bef264" opacity="0.25" />
+            </svg>
+
+            {/* Y-axis labels */}
+            <div className="absolute top-0 left-0 -ml-1 h-full flex flex-col justify-between font-mono text-[10px] text-stone-600 py-1">
+              <span>{hideValues ? '••' : `$${max.toFixed(0)}`}</span>
+              <span>{hideValues ? '••' : `$${((max + min) / 2).toFixed(0)}`}</span>
+              <span>{hideValues ? '••' : `$${min.toFixed(0)}`}</span>
+            </div>
+
+            {/* X-axis labels */}
+            <div className="flex justify-between mt-2 font-mono text-[10px] text-stone-600">
+              <span>30d ago</span>
+              <span>21d</span>
+              <span>14d</span>
+              <span>7d</span>
+              <span>today</span>
+            </div>
+          </div>
+        </div>
+      </Panel>
+
+      {/* HOLDINGS BREAKDOWN */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-mono text-xs text-stone-300 tracking-widest uppercase">Holdings · by currency</h3>
+          <div className="font-mono text-[10px] text-stone-500">live FX · refreshed 12s ago</div>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-px bg-stone-800 border border-stone-800">
+          {HOLDINGS.map((h, i) => {
+            const totalCcy = h.available + h.locked;
+            const usdValue = totalCcy * h.rate_usd;
+            const pctOfTotal = (usdValue / totalUSD) * 100;
+            const hasLocked = h.locked > 0;
+
+            return (
+              <div key={h.ccy} className="bg-[#0a0a09] p-6 hover:bg-stone-950/60 transition-colors">
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <div className="flex items-baseline gap-2 mb-1">
+                      <span style={{ fontFamily: "'Instrument Serif', serif" }} className="text-3xl text-stone-100 italic">
+                        {h.ccy}
+                      </span>
+                      <Tag kind={h.network === 'fiat' ? 'neutral' : 'system'}>{h.network}</Tag>
+                    </div>
+                    <div className="font-mono text-[10px] text-stone-500">
+                      1 {h.ccy} = ${h.rate_usd.toFixed(h.rate_usd < 1 ? 6 : 4)} USD
+                      <span className={`ml-2 ${h.change_24h >= 0 ? 'text-lime-300' : 'text-red-300'}`}>
+                        {h.change_24h >= 0 ? '▲' : '▼'} {Math.abs(h.change_24h).toFixed(2)}%
+                      </span>
+                    </div>
+                  </div>
+                  <Sparkline data={miniCurve(i)} color={h.change_24h >= 0 ? '#bef264' : '#fda4af'} />
+                </div>
+
+                <div className="space-y-2 font-mono text-xs">
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-stone-500">Balance</span>
+                    <span className="text-stone-100 text-base tabular-nums">
+                      {mask(totalCcy.toLocaleString('en-US', { minimumFractionDigits: h.ccy === 'BTC' ? 6 : 2, maximumFractionDigits: h.ccy === 'BTC' ? 6 : 2 }))} {h.ccy}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-baseline">
+                    <span className="text-stone-500">≈ USD value</span>
+                    <span className="text-stone-300 tabular-nums">
+                      {hideValues ? '••••••' : `$${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    </span>
+                  </div>
+                  {hasLocked && (
+                    <div className="flex justify-between items-baseline">
+                      <span className="text-stone-500 flex items-center gap-1.5">
+                        <Lock size={10} /> Locked
+                      </span>
+                      <span className="text-amber-300 tabular-nums">
+                        {mask(h.locked.toLocaleString('en-US', { minimumFractionDigits: 2 }))} {h.ccy}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="pt-3 border-t border-stone-900">
+                    <div className="flex justify-between text-[10px] text-stone-600 mb-1.5">
+                      <span>portfolio share</span>
+                      <span className="tabular-nums">{pctOfTotal.toFixed(1)}%</span>
+                    </div>
+                    <div className="h-1 bg-stone-900 overflow-hidden">
+                      <div
+                        className="h-full bg-lime-300/60 transition-all duration-700"
+                        style={{ width: `${pctOfTotal}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 font-mono text-[10px] text-stone-600 flex items-center gap-2">
+          <Radio size={10} className="animate-pulse text-lime-300" />
+          <span>FX rates streamed from internal mid + spread engine · auto-refresh every 30s</span>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+/* ─────────────────────────────────────────────────────────────
+   07 — MOVEMENTS HISTORY (End User)
+   ───────────────────────────────────────────────────────────── */
+
+const ALL_MOVEMENTS = [
+  { id: 'mv_001', type: 'FX_SWAP',    status: 'SETTLED', date: '2026-05-23T14:08:23Z', amt: '-1,000.00', ccy: 'USD',  out: '+985.00 USDT', desc: 'Swap USD → USDT' },
+  { id: 'mv_002', type: 'DEPOSIT',    status: 'SETTLED', date: '2026-05-23T13:42:11Z', amt: '+500.00',   ccy: 'USDT', desc: 'On-chain deposit · TRC-20' },
+  { id: 'mv_003', type: 'WITHDRAWAL', status: 'PENDING', date: '2026-05-23T12:01:55Z', amt: '-250.00',   ccy: 'USDT', desc: 'Withdrawal to TRfX…c9Y7' },
+  { id: 'mv_004', type: 'P2P',        status: 'SETTLED', date: '2026-05-23T10:14:02Z', amt: '-50.00',    ccy: 'USDT', desc: 'Sent to user_113' },
+  { id: 'mv_005', type: 'FX_SWAP',    status: 'SETTLED', date: '2026-05-22T18:33:47Z', amt: '-500.00',   ccy: 'USDC', out: '+2,074,250 COP', desc: 'Swap USDC → COP' },
+  { id: 'mv_006', type: 'DEPOSIT',    status: 'SETTLED', date: '2026-05-22T11:20:08Z', amt: '+1,500.00', ccy: 'USDC', desc: 'On-chain deposit · ERC-20' },
+  { id: 'mv_007', type: 'P2P',        status: 'SETTLED', date: '2026-05-22T09:45:00Z', amt: '+150.00',   ccy: 'USDT', desc: 'Received from user_88' },
+  { id: 'mv_008', type: 'WITHDRAWAL', status: 'SETTLED', date: '2026-05-21T16:11:32Z', amt: '-3,200,000', ccy: 'COP', desc: 'Bank transfer · Bancolombia' },
+  { id: 'mv_009', type: 'FX_SWAP',    status: 'FAILED',  date: '2026-05-21T13:55:14Z', amt: '-200.00',   ccy: 'USDT', out: '✕ quote expired', desc: 'Swap USDT → COP · reverted' },
+  { id: 'mv_010', type: 'DEPOSIT',    status: 'SETTLED', date: '2026-05-21T10:30:00Z', amt: '+3,200.00', ccy: 'USD',  desc: 'Bank transfer · Wells Fargo' },
+  { id: 'mv_011', type: 'P2P',        status: 'SETTLED', date: '2026-05-20T17:22:09Z', amt: '-75.50',    ccy: 'USDC', desc: 'Sent to user_204' },
+  { id: 'mv_012', type: 'FX_SWAP',    status: 'SETTLED', date: '2026-05-20T11:08:55Z', amt: '-0.0150',   ccy: 'BTC',  out: '+1,026.30 USDT', desc: 'Swap BTC → USDT' },
+  { id: 'mv_013', type: 'DEPOSIT',    status: 'SETTLED', date: '2026-05-19T14:00:00Z', amt: '+0.0285',   ccy: 'BTC',  desc: 'On-chain deposit · BTC' },
+  { id: 'mv_014', type: 'WITHDRAWAL', status: 'SETTLED', date: '2026-05-19T09:15:42Z', amt: '-100.00',   ccy: 'USDT', desc: 'Withdrawal to TRkM…8wXp' },
+];
+
+const formatDate = (iso) => {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatTime = (iso) => {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+};
+
+const Movements = () => {
+  const [filterType, setFilterType] = useState('ALL');
+  const [filterCcy, setFilterCcy] = useState('ALL');
+  const [filterRange, setFilterRange] = useState('7D');
+
+  // Apply filters
+  const now = new Date('2026-05-23T15:00:00Z');
+  const rangeDays = { '24H': 1, '7D': 7, '30D': 30, 'ALL': 9999 }[filterRange];
+  const cutoff = new Date(now.getTime() - rangeDays * 24 * 60 * 60 * 1000);
+
+  const filtered = ALL_MOVEMENTS.filter((m) => {
+    if (filterType !== 'ALL' && m.type !== filterType) return false;
+    if (filterCcy !== 'ALL' && m.ccy !== filterCcy) return false;
+    if (new Date(m.date) < cutoff) return false;
+    return true;
+  });
+
+  // Group by date
+  const grouped = filtered.reduce((acc, m) => {
+    const day = m.date.slice(0, 10);
+    if (!acc[day]) acc[day] = [];
+    acc[day].push(m);
+    return acc;
+  }, {});
+
+  const types = ['ALL', 'DEPOSIT', 'WITHDRAWAL', 'FX_SWAP', 'P2P'];
+  const ccys = ['ALL', 'USD', 'USDT', 'USDC', 'COP', 'BTC'];
+  const ranges = ['24H', '7D', '30D', 'ALL'];
+
+  return (
+    <section id="movements" className="py-24 px-12 lg:px-24 border-b border-stone-900">
+      <SectionMarker num="07" label="Movements" sub="full history · user_42" />
+
+      {/* FILTERS */}
+      <Panel label="Filters" className="p-5 mb-6">
+        <div className="grid md:grid-cols-3 gap-6">
+          <div>
+            <div className="font-mono text-[10px] text-stone-500 tracking-widest uppercase mb-2">Type</div>
+            <div className="flex flex-wrap gap-1">
+              {types.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setFilterType(t)}
+                  className={`px-2.5 py-1.5 font-mono text-[10px] tracking-widest border transition-colors ${
+                    filterType === t
+                      ? 'border-stone-100 bg-stone-100/5 text-stone-100'
+                      : 'border-stone-800 text-stone-500 hover:border-stone-700'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="font-mono text-[10px] text-stone-500 tracking-widest uppercase mb-2">Currency</div>
+            <div className="flex flex-wrap gap-1">
+              {ccys.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setFilterCcy(c)}
+                  className={`px-2.5 py-1.5 font-mono text-[10px] tracking-widest border transition-colors ${
+                    filterCcy === c
+                      ? 'border-stone-100 bg-stone-100/5 text-stone-100'
+                      : 'border-stone-800 text-stone-500 hover:border-stone-700'
+                  }`}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="font-mono text-[10px] text-stone-500 tracking-widest uppercase mb-2">Range</div>
+            <div className="flex flex-wrap gap-1">
+              {ranges.map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setFilterRange(r)}
+                  className={`px-2.5 py-1.5 font-mono text-[10px] tracking-widest border transition-colors ${
+                    filterRange === r
+                      ? 'border-stone-100 bg-stone-100/5 text-stone-100'
+                      : 'border-stone-800 text-stone-500 hover:border-stone-700'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 pt-4 border-t border-stone-800 flex items-center justify-between font-mono text-[10px]">
+          <span className="text-stone-500">
+            <span className="text-stone-200">{filtered.length}</span> of <span className="text-stone-400">{ALL_MOVEMENTS.length}</span> movements
+          </span>
+          {(filterType !== 'ALL' || filterCcy !== 'ALL' || filterRange !== '30D') && (
+            <button
+              onClick={() => { setFilterType('ALL'); setFilterCcy('ALL'); setFilterRange('30D'); }}
+              className="text-stone-400 hover:text-stone-100 tracking-widest uppercase"
+            >
+              ✕ Clear filters
+            </button>
+          )}
+        </div>
+      </Panel>
+
+      {/* GROUPED LIST */}
+      {Object.keys(grouped).length === 0 ? (
+        <Panel className="p-16 text-center">
+          <div className="font-mono text-xs text-stone-500 mb-2">No movements match these filters</div>
+          <button
+            onClick={() => { setFilterType('ALL'); setFilterCcy('ALL'); setFilterRange('ALL'); }}
+            className="font-mono text-[10px] tracking-widest uppercase text-lime-300 hover:text-lime-200"
+          >
+            Show all →
+          </button>
+        </Panel>
+      ) : (
+        <div className="space-y-8">
+          {Object.entries(grouped).map(([day, items]) => (
+            <div key={day}>
+              <div className="flex items-baseline gap-3 mb-3 pb-2 border-b border-stone-900">
+                <span className="font-mono text-[10px] text-stone-500 tracking-widest uppercase">
+                  {formatDate(day + 'T00:00:00Z')}
+                </span>
+                <span className="font-mono text-[10px] text-stone-700">{items.length} movements</span>
+              </div>
+
+              <Panel className="overflow-hidden">
+                {items.map((m, idx) => {
+                  const isPositive = m.amt.startsWith('+');
+                  const isNegative = m.amt.startsWith('-');
+                  return (
+                    <div
+                      key={m.id}
+                      className={`flex items-center gap-5 px-5 py-4 hover:bg-stone-950/60 transition-colors ${
+                        idx !== items.length - 1 ? 'border-b border-stone-900' : ''
+                      }`}
+                    >
+                      {/* Icon */}
+                      <div className="flex-shrink-0 w-9 h-9 border border-stone-800 flex items-center justify-center">
+                        {m.type === 'FX_SWAP' && <Repeat size={14} className="text-orange-300" />}
+                        {m.type === 'DEPOSIT' && <ArrowRight size={14} className="text-lime-300" />}
+                        {m.type === 'WITHDRAWAL' && <ArrowRight size={14} className="text-stone-400 rotate-180" />}
+                        {m.type === 'P2P' && <GitBranch size={14} className="text-sky-300" />}
+                      </div>
+
+                      {/* Description */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-mono text-sm text-stone-100 truncate">{m.desc}</span>
+                          {m.status !== 'SETTLED' && (
+                            <Tag kind={m.status === 'PENDING' ? 'pending' : 'failed'}>{m.status}</Tag>
+                          )}
+                        </div>
+                        <div className="font-mono text-[10px] text-stone-500">
+                          {formatTime(m.date)} · {m.id}
+                        </div>
+                      </div>
+
+                      {/* Amount */}
+                      <div className="text-right flex-shrink-0">
+                        <div className={`font-mono text-sm tabular-nums ${
+                          isPositive ? 'text-lime-300' : isNegative ? 'text-stone-100' : 'text-stone-300'
+                        }`}>
+                          {m.amt} <span className="text-stone-500">{m.ccy}</span>
+                        </div>
+                        {m.out && (
+                          <div className="font-mono text-[10px] text-stone-500 mt-0.5">{m.out}</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </Panel>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+};
+
+/* ─────────────────────────────────────────────────────────────
    SHELL
    ───────────────────────────────────────────────────────────── */
 
 const NAV = [
   { id: 'overview', n: '00', label: 'Architecture' },
+  { id: 'balances', n: '06', label: 'Balances' },
+  { id: 'movements', n: '07', label: 'Movements' },
   { id: 'ledger', n: '01', label: 'Ledger Engine' },
   { id: 'deposit', n: '02', label: 'Crypto Deposit' },
   { id: 'admin', n: '03', label: 'Admin Console' },
@@ -1217,6 +1712,8 @@ export default function App() {
 
       <main className="lg:ml-[200px] bg-grid">
         <Overview />
+        <Balances />
+        <Movements />
         <LedgerEngine />
         <CryptoDeposit />
         <AdminConsole />
